@@ -3,8 +3,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 import json
-import threading
-import time
+import sqlite3
 
 
 app = Flask(__name__, static_folder="../client/build", static_url_path="/")
@@ -324,8 +323,7 @@ def set_league_id():
     print(memory_storage.get("league_id", 'No string found for this key'))
     print("I HAVE SET THE LEAGUE ID TO:", memory_storage.get("league_id", 'No string found for this key'))
     
-    # Start thread to analyze league data
-    threading.Thread(target=get_all_sleeper_dfs).start()
+    get_all_sleeper_dfs()
     
     return {"status": "success", "leagueId": memory_storage.get("league_id", 'No string found for this key')}
 
