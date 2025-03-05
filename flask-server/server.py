@@ -4,9 +4,38 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import sqlite3
-
+import os
 
 app = Flask(__name__, static_folder="../client/build", static_url_path="/")
+
+# db_name = "my_database.db"
+db_name = os.path.join("/tmp", "my_database.db")
+
+def store_dataframe_to_sqlite(dataframe, table_name, if_exists='replace'):
+    conn = sqlite3.connect(db_name)
+    # Convert list and dictionary columns to JSON strings
+    for col in dataframe.columns:
+        if any(isinstance(item, (list, dict)) for item in dataframe[col]):
+            dataframe[col] = dataframe[col].apply(json.dumps)
+    dataframe.to_sql(table_name, conn, if_exists=if_exists, index=False)
+    # conn.close()
+
+def retrieve_dataframe_from_sqlite(table_name):
+    try:
+        conn = sqlite3.connect(db_name)
+        dataframe = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+        # conn.close()
+        
+        # Convert JSON strings back to lists and dictionaries safely
+        for col in dataframe.columns:
+            if dataframe[col].dtype == 'object':  # Only apply to string columns
+                dataframe[col] = dataframe[col].apply(
+                    lambda x: json.loads(x) if isinstance(x, str) and x.startswith(("{", "[")) else x
+                )
+        return dataframe
+    except sqlite3.Error as e:
+        print(f"An error occurred: {e}")
+        return None
 
 memory_storage = {}
 
@@ -52,9 +81,8 @@ def get_ktc_rankings():
     
     return df
 
-def get_league_rosters():
-    # memory_storage = load_storage()
-    leagueId = memory_storage.get("league_id", 'No string found for this key')
+def get_league_rosters(leagueId):
+    # leagueId = memory_storage.get("league_id", 'No string found for this key')
     url = "https://api.sleeper.app/v1/league/" + leagueId + "/rosters";
     response = requests.get(url)
     json_data = json.loads(response.text)
@@ -62,12 +90,21 @@ def get_league_rosters():
     return df;
 
 def get_nfl_players():
+    roster_df = retrieve_dataframe_from_sqlite("roster_df")
     url = "https://api.sleeper.app/v1/players/nfl";
     response = requests.get(url)
     json_data = json.loads(response.text)
     df = pd.DataFrame.from_dict(json_data, orient="index")
     df['sleeper_id'] = df.index
     df['full_name_lower'] = df['full_name'].str.lower()
+
+    # drop players not rostered
+    roster_players_list = roster_df['players'].apply(lambda x: x if isinstance(x, list) else [])
+    all_roster_sleeper_ids = set()
+    for player_list in roster_players_list:
+        all_roster_sleeper_ids.update(player_list)
+        
+    df = df.drop(df[~df['sleeper_id'].isin(all_roster_sleeper_ids)].index)
     return df
 
 # def get_roster_positions():
@@ -77,55 +114,50 @@ def get_nfl_players():
     roster_positions = json_data["roster_positions"]
     return roster_positions;
 
-def get_all_sleeper_dfs():
-    # memory_storage = load_storage()
-    memory_storage["rankings_df"] = get_ktc_rankings();
-    leagueId = memory_storage.get("league_id", 'No string found for this key')
-    memory_storage["roster_df"] = get_league_rosters();
-    memory_storage["players_df"] = get_nfl_players();
-    memory_storage["league_users_df"] = get_league_users();
-    rankings_df = memory_storage.get("rankings_df", 'No string found for this key')
-    players_df = memory_storage.get("players_df", 'No string found for this key') 
-    memory_storage["ranked_players_df"] = rankings_df.merge(players_df, left_on='Player', right_on='full_name', how='inner')
-    memory_storage["ranked_players_df"] = memory_storage["ranked_players_df"];
-    memory_storage["positional_strengths_df"] = get_positional_strengths();
+def get_all_sleeper_dfs(league_id):
+    rankings_df = get_ktc_rankings();
+    store_dataframe_to_sqlite(rankings_df, "rankings_df")
+    # leagueId = memory_storage.get("league_id", 'No string found for this key')
+    print("leagueID: ", league_id)
+    roster_df = get_league_rosters(league_id);
+    store_dataframe_to_sqlite(roster_df, "roster_df")
+    print("stored roster_df")
+    players_df = get_nfl_players();
+    
+    store_dataframe_to_sqlite(players_df, "players_df")
+    print("stored players_df")
+    league_users_df = get_league_users(league_id);
+    store_dataframe_to_sqlite(league_users_df, "league_users_df")
+    print("stored league_users_df")
+    ranked_players_df = rankings_df.merge(players_df, left_on='Player', right_on='full_name', how='inner')
+    store_dataframe_to_sqlite(ranked_players_df, "ranked_players_df")
+    print("stored ranked_players_df")
+    positional_strengths_df = get_positional_strengths();
+    store_dataframe_to_sqlite(positional_strengths_df, "positional_strengths_df")
+    print("stored positional_strengths_df")
     print("PROCESSED SLEEPER DATA")
 
-def get_league_users():
-    # memory_storage = load_storage()
-    leagueId = memory_storage.get("league_id", 'No string found for this key')
-    # print("ok at this test pt league id equals: ", leagueId)
+def get_league_users(leagueId):
+    # leagueId = memory_storage.get("league_id", 'No string found for this key')
     url = "https://api.sleeper.app/v1/league/" + leagueId + "/users";
     response = requests.get(url)
     json_data = json.loads(response.text)
-    # print("Response from URL: ", url, " is ", response.text)
     df = pd.DataFrame(json_data)
     return df;
 
-def get_player_rating(sleeper_id):
-    # memory_storage = load_storage()
-    ranked_players_df = memory_storage.get("ranked_players_df", 'No string found for this key')
+def get_player_rating(sleeper_id, ranked_players_df):
+    # ranked_players_df = retrieve_dataframe_from_sqlite("ranked_players_df")
     if sleeper_id in ranked_players_df['sleeper_id'].values:
         return ranked_players_df.loc[ranked_players_df["sleeper_id"] == str(sleeper_id), "Rating"].iloc[0]
     else:
         return 0
     
-def get_total_ranking_for_list(players):
-  total_ranking = sum(int(get_player_rating(player)) for player in players)
+def get_total_ranking_for_list(players, ranked_players_df):
+  total_ranking = sum(int(get_player_rating(player, ranked_players_df)) for player in players)
   return total_ranking
-    
-def get_total_ranking_for_owner(owner_id):
-    # memory_storage = load_storage()
-    roster_df = memory_storage.get("roster_df", 'No string found for this key')
-    owner_roster = roster_df[roster_df['owner_id'] == owner_id]
-    if owner_roster.empty:
-        return -1
-    players = owner_roster['players'].iloc[0]
-    return get_total_ranking_for_list(players);
 
 def get_players_at_position_from_roster(roster, position):
-    # memory_storage = load_storage()
-    players_df = memory_storage.get("players_df", 'No string found for this key')
+    players_df = retrieve_dataframe_from_sqlite("players_df")
     players_at_position = []
     for player_id in roster:
         if player_id in players_df.index and players_df.loc[player_id, 'position'] == position:
@@ -133,17 +165,21 @@ def get_players_at_position_from_roster(roster, position):
     return players_at_position
 
 def get_players_at_position_from_owner_id(owner_id, position):
-    # memory_storage = load_storage()
-    roster_df = memory_storage.get("roster_df", 'No string found for this key')
-    players_df = memory_storage.get("players_df", 'No string found for this key')
+    players_df = retrieve_dataframe_from_sqlite("players_df")
+    roster_df = retrieve_dataframe_from_sqlite("roster_df")
+    
+    players_df.set_index('player_id', inplace=True)
+
     owner_roster = roster_df[roster_df['owner_id'] == owner_id]
     if owner_roster.empty:
         return []
     players = owner_roster['players'].iloc[0]
     players_at_position = []
+    
     for player_id in players:
         if player_id in players_df.index and players_df.loc[player_id, 'position'] == position:
             players_at_position.append(player_id)
+            
     return players_at_position
 
 def get_players_at_position_from_owners(owner_ids, position):
@@ -155,8 +191,7 @@ def get_players_at_position_from_owners(owner_ids, position):
     return df
 
 def get_player_names_from_sleeper_ids(sleeper_ids):
-    # memory_storage = load_storage()
-    players_df = memory_storage.get("players_df", 'No string found for this key')
+    players_df = retrieve_dataframe_from_sqlite("players_df")
     player_names = []
     for sleeper_id in sleeper_ids:
         try:
@@ -167,22 +202,49 @@ def get_player_names_from_sleeper_ids(sleeper_ids):
     return player_names
     
 def get_positional_strengths():
-    # memory_storage = load_storage()
-    roster_df = memory_storage.get("roster_df", 'No string found for this key')
-    league_users_df = memory_storage.get("league_users_df", 'No string found for this key')
-    
+    roster_df = retrieve_dataframe_from_sqlite("roster_df")
+    league_users_df = retrieve_dataframe_from_sqlite("league_users_df")
+    ranked_players_df = retrieve_dataframe_from_sqlite("ranked_players_df")
+    players_df = retrieve_dataframe_from_sqlite("players_df")
+    print("retrieved roster and league users dfs")
     positional_strengths_df = pd.DataFrame(roster_df['owner_id'].unique(), columns=["owner_id"])
     positional_strengths_df['display_name'] = positional_strengths_df['owner_id'].map(league_users_df.set_index('user_id')['display_name'])
-    positional_strengths_df['total_rating'] = positional_strengths_df['owner_id'].apply(get_total_ranking_for_owner)
-    positional_strengths_df['qb_rating'] = positional_strengths_df['owner_id'].apply(lambda owner_id: get_total_ranking_for_list(get_players_at_position_from_owner_id(owner_id, "QB")))
-    positional_strengths_df['rb_rating'] = positional_strengths_df['owner_id'].apply(lambda owner_id: get_total_ranking_for_list(get_players_at_position_from_owner_id(owner_id, "RB")))
-    positional_strengths_df['wr_rating'] = positional_strengths_df['owner_id'].apply(lambda owner_id: get_total_ranking_for_list(get_players_at_position_from_owner_id(owner_id, "WR")))
-    positional_strengths_df['te_rating'] = positional_strengths_df['owner_id'].apply(lambda owner_id: get_total_ranking_for_list(get_players_at_position_from_owner_id(owner_id, "TE")))
+    print("got display name")
+    
+    unique_owners = positional_strengths_df['owner_id'].unique()
+    qb_rankings = {}
+    for owner_id in unique_owners:
+        qbs = get_players_at_position_from_owner_id(owner_id, "QB")
+        qb_rankings[owner_id] = get_total_ranking_for_list(qbs, ranked_players_df)  # instant
+    positional_strengths_df['qb_rating'] = positional_strengths_df['owner_id'].map(qb_rankings)
+    print("computed qb ratings")
+
+    rb_rankings = {}
+    for owner_id in unique_owners:
+        rbs = get_players_at_position_from_owner_id(owner_id, "RB")
+        rb_rankings[owner_id] = get_total_ranking_for_list(rbs, ranked_players_df)
+    positional_strengths_df['rb_rating'] = positional_strengths_df['owner_id'].map(rb_rankings)
+    print("computed rb ratings")
+
+    wr_rankings = {}
+    for owner_id in unique_owners:
+        wrs = get_players_at_position_from_owner_id(owner_id, "WR")
+        wr_rankings[owner_id] = get_total_ranking_for_list(wrs, ranked_players_df)
+    positional_strengths_df['wr_rating'] = positional_strengths_df['owner_id'].map(wr_rankings)
+    print("computed wr ratings")
+
+    te_rankings = {}
+    for owner_id in unique_owners:
+        tes = get_players_at_position_from_owner_id(owner_id, "TE")
+        te_rankings[owner_id] = get_total_ranking_for_list(tes, ranked_players_df)
+    positional_strengths_df['te_rating'] = positional_strengths_df['owner_id'].map(te_rankings)
+    print("computed te ratings")
+
+    print("got pos rankings")
     return positional_strengths_df
 
 def is_above_median(owner_id, position):
-    # memory_storage = load_storage()
-    positional_strengths_df = memory_storage.get("positional_strengths_df", 'No string found for this key')
+    positional_strengths_df = retrieve_dataframe_from_sqlite("positional_strengths_df")
     position_column = position.lower() + '_rating'
 
     if position_column not in positional_strengths_df.columns:
@@ -201,28 +263,23 @@ def is_above_median(owner_id, position):
     return owner_rating > median_rating
 
 def owner_positions_of_need(owner_id):
-    # memory_storage = load_storage()
-    league_users_df = memory_storage.get("league_users_df", 'No string found for this key')
-    # owner_data = league_users_df[league_users_df['user_id'] == owner_id]
     positions_of_need = []
     for position in ["QB", "RB", "WR", "TE"]:
         above_median = is_above_median(owner_id, position)
         if above_median is not None:
             if not above_median:
                 positions_of_need.append(position)
+                
     return positions_of_need
 
 def owner_positions_of_strength(owner_id):
-    # memory_storage = load_storage()
-    league_users_df = memory_storage.get("league_users_df", 'No string found for this key')
-    # owner_data = league_users_df[league_users_df['user_id'] == owner_id]
-    positions_of_need = []
+    positions_of_strength = []
     for position in ["QB", "RB", "WR", "TE"]:
         above_median = is_above_median(owner_id, position)
         if above_median is not None:
             if  above_median:
-                positions_of_need.append(position)
-    return positions_of_need
+                positions_of_strength.append(position)
+    return positions_of_strength
 
 def get_players_to_trade_away(owner_id):
     this_owner_positions_of_strength = owner_positions_of_strength(owner_id)
@@ -236,8 +293,7 @@ def get_players_to_trade_away(owner_id):
     return get_player_names_from_sleeper_ids(players_to_trade_away)
 
 def get_rosters_without_position_need(position):
-    # memory_storage = load_storage()
-    positional_strengths_df = memory_storage.get("positional_strengths_df", 'No string found for this key')
+    positional_strengths_df = retrieve_dataframe_from_sqlite("positional_strengths_df")
     rosters_without_need = []
     for owner_id in positional_strengths_df['owner_id']:
         if position.upper() not in owner_positions_of_need(owner_id):
@@ -245,8 +301,7 @@ def get_rosters_without_position_need(position):
     return rosters_without_need
 
 def generate_trade_proposals(players_to_trade_away, players_likely_to_be_traded_df):
-    # memory_storage = load_storage()
-    ranked_players_df = memory_storage.get("ranked_players_df", 'No string found for this key')
+    ranked_players_df = retrieve_dataframe_from_sqlite("ranked_players_df")
     trade_proposals = []
     tolerance = 0.05  # 5% tolerance
 
@@ -279,14 +334,12 @@ def generate_trade_proposals(players_to_trade_away, players_likely_to_be_traded_
     return trade_proposal_df
 
 def identify_trade_opportunities_from_owner(owner_id):
-    # memory_storage = load_storage()
-    league_users_df = memory_storage.get("league_users_df", 'No string found for this key')
+    league_users_df = retrieve_dataframe_from_sqlite("league_users_df")
     owner_positions_you_need = owner_positions_of_need(owner_id)
     owner_players_to_trade_away = get_players_to_trade_away(owner_id)
     trade_targets_df_list =[]
     for pos in owner_positions_you_need:
         trade_targets_df_list.append(get_players_at_position_from_owners(get_rosters_without_position_need(pos), pos))
-        # print(trade_targets_df_list)
 
     if not trade_targets_df_list: return pd.DataFrame({"message": ["You have no positional weaknesses"]})
     trade_targets_df = pd.concat(trade_targets_df_list, ignore_index=True)
@@ -299,9 +352,8 @@ def identify_trade_opportunities_from_owner(owner_id):
     return trade_proposals;
 
 def get_owner_id_from_display_name(display_name):
-    # memory_storage = load_storage()
-    league_users_df = memory_storage.get("league_users_df", 'No string found for this key')
-    print(f"Type of league_users_df: {type(league_users_df)}")
+    league_users_df = retrieve_dataframe_from_sqlite("league_users_df")
+    # print(f"Type of league_users_df: {type(league_users_df)}")
     try:
         owner_id = league_users_df.loc[league_users_df['display_name'] == display_name, 'user_id'].iloc[0]
         return owner_id
@@ -316,57 +368,48 @@ def home():
 # Set LeagueId API route
 @app.route("/setLeagueId", methods=["POST"])
 def set_league_id():
-    # memory_storage = load_storage()
     data = json.loads(request.data)
     print("Data from trying to set league ID:", data)
     memory_storage["league_id"] = data.get("leagueId", "")
     print(memory_storage.get("league_id", 'No string found for this key'))
     print("I HAVE SET THE LEAGUE ID TO:", memory_storage.get("league_id", 'No string found for this key'))
     
-    get_all_sleeper_dfs()
+    # get_all_sleeper_dfs()
     
     return {"status": "success", "leagueId": memory_storage.get("league_id", 'No string found for this key')}
 
 # Test rankings df API route
 @app.route("/getRankings")
 def get_rankings():
-    # memory_storage = load_storage()
-    rankings_df = memory_storage.get("rankings_df", 'No string found for this key')
+    rankings_df = retrieve_dataframe_from_sqlite("rankings_df")
     first_rating = rankings_df['Rating'].iloc[1]   
     print("First rating: ", first_rating, rankings_df['Player'].iloc[1])
     return first_rating
 
 # Get league users API route
-@app.route("/getLeagueUsers")
-def get_league_users_route():
-    # memory_storage = load_storage()
-    leagueId = memory_storage.get("league_id", 'No string found for this key')
-    league_users_df = get_league_users()
-    print("Here is the league ID:", leagueId)
+@app.route("/getLeagueUsers/<league_id>")
+def get_league_users_route(league_id):
+    # leagueId = memory_storage.get("league_id", 'No string found for this key')
+    league_users_df = get_league_users(league_id)
+    print("Here is the league ID:", league_id)
     users = league_users_df[['display_name', 'avatar']].to_dict(orient='records')
     return {"users": users}
 
 # Get trade opportunities from owner API route
-@app.route("/getTradeOpportunitiesFromOwner/<user_name>")
-def get_trade_opportunities_from_owner_route(user_name):
+@app.route("/getTradeOpportunitiesFromOwner/<league_id>/<user_name>")
+def get_trade_opportunities_from_owner_route(league_id, user_name):
+    print("league_id :", league_id)
+    get_all_sleeper_dfs(league_id)
     owner_id = get_owner_id_from_display_name(user_name);
     trade_opportunities_df = identify_trade_opportunities_from_owner(owner_id);
     trade_opportunities_json = trade_opportunities_df.where(pd.notna(trade_opportunities_df), None).to_dict(orient="records")
     return trade_opportunities_json
 
-# Get players to trade away API route
-@app.route("/getPlayersToTradeAway/<user_name>")
-def get_players_to_trade_away_route(user_name):
-    owner_id = get_owner_id_from_display_name(user_name)
-    if owner_id is None:
-        return {"error": "Owner not found"}
-    players_to_trade_away = get_players_to_trade_away(owner_id)
-    return {"players_to_trade_away": players_to_trade_away}
-
-
 # Get owner positions of strength API route
-@app.route("/getOwnerPositionsOfStrength/<user_name>")
-def get_owner_positions_of_strength_route(user_name):
+@app.route("/getOwnerPositionsOfStrength/<league_id>/<user_name>")
+def get_owner_positions_of_strength_route(league_id, user_name):
+    #debug
+    get_all_sleeper_dfs(league_id)
     owner_id = get_owner_id_from_display_name(user_name)
     if owner_id is None:
         return {"error": "Owner not found"}
@@ -374,8 +417,9 @@ def get_owner_positions_of_strength_route(user_name):
     return {"positions_of_strength": positions_of_strength}
 
 # Get owner positions of weakness API route
-@app.route("/getOwnerPositionsOfNeed/<user_name>")
-def get_owner_positions_of_need_route(user_name):
+@app.route("/getOwnerPositionsOfNeed/<league_id>/<user_name>")
+def get_owner_positions_of_need_route(league_id, user_name):
+    get_all_sleeper_dfs(league_id)
     owner_id = get_owner_id_from_display_name(user_name)
     if owner_id is None:
         return {"error": "Owner not found"}
