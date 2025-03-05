@@ -159,12 +159,22 @@ body {
   margin-bottom: 0.5rem;
 }
 
+.lottie-container {
+  width: 20rem;        /* Adjust width as needed */
+  height: 4rem;       /* Adjust height as needed to crop vertically */
+  overflow: hidden;    /* Crop the content */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
 .badge {
   display: inline-block;
   padding: 0.25rem 0.5rem;
   border-radius: 9999px;
   font-size: 0.75rem;
   font-weight: bold;
+  margin: 0.1rem;
 }
 
 .badge-strength {
@@ -186,11 +196,16 @@ body {
   border: 1px solid var(--color-border);
   border-radius: 8px;
   margin-bottom: 1rem;
+  position: relative; /* Add this line */
 }
 
 .player-card {
   display: flex;
   align-items: center;
+}
+
+.player-card-right {
+  text-align: right;
 }
 
 .player-avatar {
@@ -221,6 +236,9 @@ body {
 .trade-icon {
   font-size: 1.5rem;
   color: var(--color-accent);
+  position: absolute; /* Add this line */
+  left: 50%; /* Add this line */
+  transform: translateX(-50%); /* Add this line */
 }
 
 .footer {
