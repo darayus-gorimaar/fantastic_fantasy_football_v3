@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import "./App.css";
-import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 
 function App() {
   const [leagueId, setLeagueId] = useState("");
@@ -177,14 +176,7 @@ function App() {
                 <h3>Positions of Strength</h3>
                 <div>
                   {positionsOfStrength.length === 0 ? (
-                    <div>
-                      <DotLottieReact
-                        className="lottie-container"
-                        src="https://lottie.host/bb18392a-6141-411f-b332-ad732ea1051c/Of7YJ50SBj.lottie"
-                        loop
-                        autoplay
-                      />
-                    </div>
+                    <div>Loading...</div>
                   ) : (
                     positionsOfStrength.map((pos, idx) => (
                       <span key={idx} className="badge badge-strength">
@@ -198,14 +190,7 @@ function App() {
                 <h3>Positions of Need</h3>
                 <div>
                   {positionsOfNeed.length === 0 ? (
-                    <div>
-                      <DotLottieReact
-                        className="lottie-container"
-                        src="https://lottie.host/bb18392a-6141-411f-b332-ad732ea1051c/Of7YJ50SBj.lottie"
-                        loop
-                        autoplay
-                      />
-                    </div>
+                    <div>Loading...</div>
                   ) : (
                     positionsOfNeed.map((pos, idx) => (
                       <span key={idx} className="badge badge-need">
@@ -224,13 +209,7 @@ function App() {
               </p>
 
               {trades.length === 0 ? (
-                <div>
-                  <DotLottieReact
-                    src="https://lottie.host/1de40161-da9b-4383-8cb9-94ee6821649c/7qGJmXdpDT.lottie"
-                    loop
-                    autoplay
-                  />
-                </div>
+                <div>Loading...</div>
               ) : (
                 trades.map((trade, index) => (
                   <div key={index} className="trade-proposal">
