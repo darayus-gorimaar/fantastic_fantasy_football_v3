@@ -5,4 +5,4 @@
 
 Backend: Python with Flask, handling API requests and data analysis  
 Database: SQLite  
-Frontend: React (with Vite as the build tool)   
+Frontend: React (with Vite as the build tool), JavaScript, CSS
