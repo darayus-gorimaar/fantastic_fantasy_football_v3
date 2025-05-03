@@ -1,4 +1,4 @@
-# Fantasy Football Trade Proposer App
+# Fantasy Football Trade Proposer
 **Full Stack Data Exctraction and Analysis Web App**
 
 [Check it out live!](https://trade-proposer.vercel.app/)
